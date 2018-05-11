@@ -19,11 +19,17 @@
 
 # Attempts to find a proper value for SPARK_HOME. Should be included using "source" directive.
 
+# TODO： 此 Python 脚本到底在哪里会用到
 FIND_SPARK_HOME_PYTHON_SCRIPT="$(cd "$(dirname "$0")"; pwd)/find_spark_home.py"
 
 # Short circuit if the user already has this set.
 if [ ! -z "${SPARK_HOME}" ]; then
    exit 0
+
+# `-f filename` 判断该文件是否是常规文件
+# 这里的逻辑是首先定义一个文件路径 `FIND_SPARK_HOME_PYTHON_SCRIPT`，然后判断这个文件是否存在
+# 存在的话执行这个 python 脚本得到 `SPARK_HOME`，否则就设置本目录的上层目录为 `SPARK_HOME`
+
 elif [ ! -f "$FIND_SPARK_HOME_PYTHON_SCRIPT" ]; then
   # If we are not in the same directory as find_spark_home.py we are not pip installed so we don't
   # need to search the different Python directories for a Spark installation.

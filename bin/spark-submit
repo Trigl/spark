@@ -17,6 +17,12 @@
 # limitations under the License.
 #
 
+# `if [ -z "${SPARK_HOME}" ]` 用来判断是否设置 `SPARK_HOME` 环境变量，是就是没有设置
+# `$(dirname "$0")` 指当前目录，Quora 上解释的很详细：
+#   https://www.quora.com/What-does-this-mean-in-my-shell-script-dirname-0
+# `source filename` 是指读取并执行该文件
+# 整体逻辑就是首先检查 `SPARK_HOME` 是否设置，没有设置就执行同一目录下的 `find-spark-home` 文件
+
 if [ -z "${SPARK_HOME}" ]; then
   source "$(dirname "$0")"/find-spark-home
 fi
@@ -24,4 +30,6 @@ fi
 # disable randomized hash for string in Python 3.3+
 export PYTHONHASHSEED=0
 
+# `$@` 是指传入该脚本的所有参数
+# 在这里把参数传递给了 `spark-class` 实际执行
 exec "${SPARK_HOME}"/bin/spark-class org.apache.spark.deploy.SparkSubmit "$@"

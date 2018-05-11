@@ -29,8 +29,10 @@ fi
 if [ -z "$SPARK_ENV_LOADED" ]; then
   export SPARK_ENV_LOADED=1
 
+  # ${parameter:-word} 的含义是如果 parameter 没有设置或者为空，就使用后面的 word
   export SPARK_CONF_DIR="${SPARK_CONF_DIR:-"${SPARK_HOME}"/conf}"
 
+  # 这里使用了 set ±a，在 set -a 和 set +a 范围內定义的变量会被 export 为环境变量
   if [ -f "${SPARK_CONF_DIR}/spark-env.sh" ]; then
     # Promote all variable declarations to environment (exported) variables
     set -a

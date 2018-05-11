@@ -17,13 +17,17 @@
 # limitations under the License.
 #
 
+# 第一步仍然是检查 SPARK_HOME
 if [ -z "${SPARK_HOME}" ]; then
   source "$(dirname "$0")"/find-spark-home
 fi
 
+# 然后执行 load-spark-env.sh
 . "${SPARK_HOME}"/bin/load-spark-env.sh
 
 # Find the java binary
+# -n 的意思就是 notnull，判断非空，可以认为与 -z 相反
+# `command -v java` 是找出 java 的执行目录，类似于 which
 if [ -n "${JAVA_HOME}" ]; then
   RUNNER="${JAVA_HOME}/bin/java"
 else
@@ -36,12 +40,14 @@ else
 fi
 
 # Find Spark jars.
+# -d 检查该目录是否存在
 if [ -d "${SPARK_HOME}/jars" ]; then
   SPARK_JARS_DIR="${SPARK_HOME}/jars"
 else
   SPARK_JARS_DIR="${SPARK_HOME}/assembly/target/scala-$SPARK_SCALA_VERSION/jars"
 fi
 
+# 检查 Spark 的 jar 包是否存在，存在的话加入到运行路径中
 if [ ! -d "$SPARK_JARS_DIR" ] && [ -z "$SPARK_TESTING$SPARK_SQL_TESTING" ]; then
   echo "Failed to find Spark jars directory ($SPARK_JARS_DIR)." 1>&2
   echo "You need to build Spark with the target \"package\" before running this program." 1>&2
@@ -73,6 +79,12 @@ build_command() {
 }
 
 # Turn off posix mode since it does not allow process substitution
+# `< <(build_command "$@")` 的作用是执行 `build_command` 函数，结果输出到循环中
+# 关于 `< <` 的解释可以看这个回答：https://askubuntu.com/a/678923
+# 对于 `while IFS= read -d '' -r ARG; do` 是指循环读取上面 `build_command` 返回的结果
+# `-d ''` 就是指读取到空字符时就进行下一个循环；`-r` 防止读取时进行转义
+# 例如当读取到 `\n` 时，并不会转义将其看作是换行标志符。参见：https://askubuntu.com/a/984363
+# 所以这段代码总体的含义就是首先执行函数 `build_command`，对其返回结果按照空字符 '' 分割进行循环。
 set +o posix
 CMD=()
 while IFS= read -d '' -r ARG; do
