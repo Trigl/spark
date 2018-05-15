@@ -57,6 +57,7 @@ class Main {
     AbstractCommandBuilder builder;
     if (className.equals("org.apache.spark.deploy.SparkSubmit")) {
       try {
+        // 实例化 CommandBuilder 的过程，其实就是识别解析输入的参数的工程，并对不同参数分类和规范化
         builder = new SparkSubmitCommandBuilder(args);
       } catch (IllegalArgumentException e) {
         printLaunchCommand = false;
@@ -83,6 +84,7 @@ class Main {
     }
 
     Map<String, String> env = new HashMap<>();
+    // 第二步就是利用上面的 CommandBuilder 实例，建立可以在 bash 中执行的 Java 命令，返回一个可执行命令列表，使用 NULL 作为分隔符
     List<String> cmd = builder.buildCommand(env);
     if (printLaunchCommand) {
       System.err.println("Spark Command: " + join(" ", cmd));

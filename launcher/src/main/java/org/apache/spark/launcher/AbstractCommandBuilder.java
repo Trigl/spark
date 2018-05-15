@@ -45,6 +45,7 @@ abstract class AbstractCommandBuilder {
   String appResource;
   String deployMode;
   String javaHome;
+  // 应用类名
   String mainClass;
   String master;
   protected String propertiesFile;
@@ -81,6 +82,7 @@ abstract class AbstractCommandBuilder {
 
   /**
    * Builds a list of arguments to run java.
+   * 如何创建 Java 命令呢？首先是把 Java 执行路径和 classpath 放入 list
    *
    * This method finds the java executable to use and appends JVM-specific options for running a
    * class with Spark in the classpath. It also loads options from the "java-opts" file in the
@@ -266,6 +268,7 @@ abstract class AbstractCommandBuilder {
   Map<String, String> getEffectiveConfig() throws IOException {
     if (effectiveConfig == null) {
       effectiveConfig = new HashMap<>(conf);
+      // 加载 spark-default.conf 配置
       Properties p = loadPropertiesFile();
       for (String key : p.stringPropertyNames()) {
         if (!effectiveConfig.containsKey(key)) {

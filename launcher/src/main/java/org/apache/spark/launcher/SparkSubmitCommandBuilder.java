@@ -98,6 +98,7 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
    * to parse the command lines for things like bin/spark-shell, which allows users to mix and
    * match arguments (e.g. "bin/spark-shell SparkShellArg --master foo").
    */
+  // to-do: 不是很明确这个参数的作用
   private boolean allowsMixedArguments;
 
   /**
@@ -143,6 +144,7 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
 
       this.isExample = isExample;
       OptionParser parser = new OptionParser(true);
+      // 对具体传入的不同类型的参数进行解析，然后赋值给本类对应的成员变量
       parser.parse(submitArgs);
       this.requiresAppResource = parser.requiresAppResource;
     } else {
@@ -422,6 +424,7 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
   private class OptionParser extends SparkSubmitOptionParser {
 
     boolean requiresAppResource = true;
+    // 感觉指假设有异常参数时
     private final boolean errorOnUnknownArgs;
 
     OptionParser(boolean errorOnUnknownArgs) {

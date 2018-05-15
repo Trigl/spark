@@ -47,6 +47,8 @@ public class SparkLauncher extends AbstractLauncher<SparkLauncher> {
   /** Configuration key for the driver memory. */
   public static final String DRIVER_MEMORY = "spark.driver.memory";
   /** Configuration key for the driver class path. */
+  // 在 client 模式下，不要在 Spark 应用代码中设置这个参数，因为 driver 的 JVM 已经启动了
+  // 可以在 CLI 或者 Spark 的配置文件中设置这个参数
   public static final String DRIVER_EXTRA_CLASSPATH = "spark.driver.extraClassPath";
   /** Configuration key for the driver VM options. */
   public static final String DRIVER_EXTRA_JAVA_OPTIONS = "spark.driver.extraJavaOptions";

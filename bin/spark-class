@@ -28,6 +28,7 @@ fi
 # Find the java binary
 # -n 的意思就是 notnull，判断非空，可以认为与 -z 相反
 # `command -v java` 是找出 java 的执行目录，类似于 which
+# `echo "message" >&2` 是指将 message 输出到标准错误文件中，其中 &2 是文件标志符2，指 stderr。&0 对应 stdin，&1 对应 stdout
 if [ -n "${JAVA_HOME}" ]; then
   RUNNER="${JAVA_HOME}/bin/java"
 else
@@ -73,6 +74,8 @@ fi
 #
 # The exit code of the launcher is appended to the output, so the parent shell removes it from the
 # command array and checks the value to see if the launcher succeeded.
+# `$?` 是最后一个命令的返回值，详细解释看这里：https://stackoverflow.com/questions/10032078/what-does-mean-in-bash-scripts
+# `\0` 代指一个空字符，即 `''`
 build_command() {
   "$RUNNER" -Xmx128m -cp "$LAUNCH_CLASSPATH" org.apache.spark.launcher.Main "$@"
   printf "%d\0" $?
@@ -93,19 +96,26 @@ done < <(build_command "$@")
 
 COUNT=${#CMD[@]}
 LAST=$((COUNT - 1))
+# 最后一个参数的值，也就是 `org.apache.spark.launcher.Main` 这个方法的返回码
 LAUNCHER_EXIT_CODE=${CMD[$LAST]}
 
 # Certain JVM failures result in errors being printed to stdout (instead of stderr), which causes
 # the code that parses the output of the launcher to get confused. In those cases, check if the
 # exit code is an integer, and if it's not, handle it as a special error case.
+# `=~` 左边是字符串，右边是正则表达式，它的作用就是看左右两边是否匹配
+# `head -n-1` 即 `head -n -1`，-1 是指输出文件所有内容除了最后一行
+# 返回值 1 代表寻常错误，0 代表成功，2 代表误用 bash 内建函数
+# 所以这里逻辑是如果 `org.apache.spark.launcher.Main` 的返回值不在 0～9 之间，那么就将错误日志打到系统标准错误中
 if ! [[ $LAUNCHER_EXIT_CODE =~ ^[0-9]+$ ]]; then
   echo "${CMD[@]}" | head -n-1 1>&2
   exit 1
 fi
 
+# 如果 `org.apache.spark.launcher.Main` 的返回值在 0～9 之间但是不为0，那就返回这个值
 if [ $LAUNCHER_EXIT_CODE != 0 ]; then
   exit $LAUNCHER_EXIT_CODE
 fi
 
+# 如果 `org.apache.spark.launcher.Main` 的返回值为0，那么就执行去掉这个返回值以后的命令列表
 CMD=("${CMD[@]:0:$LAST}")
 exec "${CMD[@]}"
