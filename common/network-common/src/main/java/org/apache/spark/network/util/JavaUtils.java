@@ -259,6 +259,7 @@ public class JavaUtils {
    * provided, a direct conversion to the provided unit is attempted.
    */
   public static long byteStringAs(String str, ByteUnit unit) {
+    // 小写本地化
     String lower = str.toLowerCase(Locale.ROOT).trim();
 
     try {

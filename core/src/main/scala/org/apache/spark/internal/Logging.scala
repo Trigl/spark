@@ -103,6 +103,7 @@ trait Logging {
       isInterpreter: Boolean,
       silent: Boolean = false): Boolean = {
     if (!Logging.initialized) {
+      // 加锁
       Logging.initLock.synchronized {
         if (!Logging.initialized) {
           initializeLogging(isInterpreter, silent)
@@ -178,7 +179,8 @@ private[spark] object Logging {
       bridgeClass.getMethod("install").invoke(null)
     }
   } catch {
-    case e: ClassNotFoundException => // can't log anything yet so just fail silently
+    case e: ClassNotFoundException =>
+    e.printStackTrace()// can't log anything yet so just fail silently
   }
 
   /**

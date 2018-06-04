@@ -57,7 +57,9 @@ import org.apache.spark.util._
  * The latter two operations are currently supported only for standalone and Mesos cluster modes.
  */
 private[deploy] object SparkSubmitAction extends Enumeration {
+  // type 后的 SparkSubmitAction 是 Value 的别名，这种用法还可以延展到泛型
   type SparkSubmitAction = Value
+  // 枚举的使用方法
   val SUBMIT, KILL, REQUEST_STATUS, PRINT_VERSION = Value
 }
 
@@ -893,6 +895,7 @@ object SparkSubmit extends CommandLineUtils with Logging {
     "org.apache.spark.deploy.k8s.submit.KubernetesClientApplication"
 
   override def main(args: Array[String]): Unit = {
+    // Scala 子类继承父类的另一种方式
     val submit = new SparkSubmit() {
       self =>
 

@@ -47,6 +47,9 @@ class Main {
    * character. On Windows, the output is a command line suitable for direct execution from the
    * script.
    */
+  // Parameter: org.apache.spark.deploy.SparkSubmit --class org.apache.spark.examples.SparkPi --master yarn
+  // --deploy-mode cluster --driver-memory 1g --executor-memory 1g --executor-cores 1
+  // --conf spark.yarn.jar=hdfs://ip-10-201-1-216.cn-north-1.compute.internal:8020/apps/spark/spark-libs.zip examples/jars/spark-examples.jar 10
   public static void main(String[] argsArray) throws Exception {
     checkArgument(argsArray.length > 0, "Not enough arguments: missing class name.");
 
