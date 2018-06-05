@@ -359,6 +359,8 @@ private[spark] class SparkSubmit extends Logging {
     args.pyFiles = Option(args.pyFiles).map(resolveGlobPaths(_, hadoopConf)).orNull
     args.archives = Option(args.archives).map(resolveGlobPaths(_, hadoopConf)).orNull
 
+    // 普通 val 在定义时就会执行，而加了 lazy 的只在被用到的时候才会执行，并且只执行这一次，以后都是直接给出结果
+    // 这样可以避免提前浪费资源
     lazy val secMgr = new SecurityManager(sparkConf)
 
     // In client mode, download remote files.
