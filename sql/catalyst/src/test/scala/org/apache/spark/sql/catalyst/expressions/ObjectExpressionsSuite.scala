@@ -20,6 +20,7 @@ package org.apache.spark.sql.catalyst.expressions
 import java.sql.{Date, Timestamp}
 
 import scala.collection.JavaConverters._
+import scala.language.existentials
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 import scala.util.Random
@@ -71,7 +72,7 @@ class ObjectExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val cls = classOf[Tuple2[Boolean, java.lang.Integer]]
     val inputObject = BoundReference(0, ObjectType(cls), nullable = true)
     val invoke = Invoke(inputObject, "_2", IntegerType)
-    checkEvaluationWithGeneratedMutableProjection(invoke, null, inputRow)
+    checkEvaluationWithMutableProjection(invoke, null, inputRow)
   }
 
   test("MapObjects should make copies of unsafe-backed data") {
@@ -81,10 +82,7 @@ class ObjectExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val structExpected = new GenericArrayData(
       Array(InternalRow.fromSeq(Seq(1, 2)), InternalRow.fromSeq(Seq(3, 4))))
     checkEvaluationWithUnsafeProjection(
-      structEncoder.serializer.head,
-      structExpected,
-      structInputRow,
-      UnsafeProjection) // TODO(hvanhovell) revert this when SPARK-23587 is fixed
+      structEncoder.serializer.head, structExpected, structInputRow)
 
     // test UnsafeArray-backed data
     val arrayEncoder = ExpressionEncoder[Array[Array[Int]]]
@@ -92,10 +90,7 @@ class ObjectExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val arrayExpected = new GenericArrayData(
       Array(new GenericArrayData(Array(1, 2)), new GenericArrayData(Array(3, 4))))
     checkEvaluationWithUnsafeProjection(
-      arrayEncoder.serializer.head,
-      arrayExpected,
-      arrayInputRow,
-      UnsafeProjection) // TODO(hvanhovell) revert this when SPARK-23587 is fixed
+      arrayEncoder.serializer.head, arrayExpected, arrayInputRow)
 
     // test UnsafeMap-backed data
     val mapEncoder = ExpressionEncoder[Array[Map[Int, Int]]]
@@ -109,10 +104,7 @@ class ObjectExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
         new GenericArrayData(Array(3, 4)),
         new GenericArrayData(Array(300, 400)))))
     checkEvaluationWithUnsafeProjection(
-      mapEncoder.serializer.head,
-      mapExpected,
-      mapInputRow,
-      UnsafeProjection) // TODO(hvanhovell) revert this when SPARK-23587 is fixed
+      mapEncoder.serializer.head, mapExpected, mapInputRow)
   }
 
   test("SPARK-23582: StaticInvoke should support interpreted execution") {
@@ -241,13 +233,13 @@ class ObjectExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
       Literal.fromObject(new TestBean),
       Map("setNonPrimitive" -> Literal(null)))
     evaluateWithoutCodegen(initializeBean, InternalRow.fromSeq(Seq()))
-    evaluateWithGeneratedMutableProjection(initializeBean, InternalRow.fromSeq(Seq()))
+    evaluateWithMutableProjection(initializeBean, InternalRow.fromSeq(Seq()))
 
     val initializeBean2 = InitializeJavaBean(
       Literal.fromObject(new TestBean),
       Map("setNonPrimitive" -> Literal("string")))
     evaluateWithoutCodegen(initializeBean2, InternalRow.fromSeq(Seq()))
-    evaluateWithGeneratedMutableProjection(initializeBean2, InternalRow.fromSeq(Seq()))
+    evaluateWithMutableProjection(initializeBean2, InternalRow.fromSeq(Seq()))
   }
 
   test("SPARK-23585: UnwrapOption should support interpreted execution") {
@@ -281,13 +273,12 @@ class ObjectExpressionsSuite extends SparkFunSuite with ExpressionEvalHelper {
     val resolver = ResolveTimeZone(new SQLConf)
     val expr = resolver.resolveTimeZones(serializer.deserialize(serializer.serialize(expression)))
     checkEvaluationWithoutCodegen(expr, expected, inputRow)
-    checkEvaluationWithGeneratedMutableProjection(expr, expected, inputRow)
+    checkEvaluationWithMutableProjection(expr, expected, inputRow)
     if (GenerateUnsafeProjection.canSupport(expr.dataType)) {
       checkEvaluationWithUnsafeProjection(
         expr,
         expected,
-        inputRow,
-        UnsafeProjection) // TODO(hvanhovell) revert this when SPARK-23587 is fixed
+        inputRow)
     }
     checkEvaluationWithOptimization(expr, expected, inputRow)
   }

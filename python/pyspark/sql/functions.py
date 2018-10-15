@@ -152,12 +152,18 @@ _functions_2_4 = {
 _collect_list_doc = """
     Aggregate function: returns a list of objects with duplicates.
 
+    .. note:: The function is non-deterministic because the order of collected results depends
+        on order of rows which may be non-deterministic after a shuffle.
+
     >>> df2 = spark.createDataFrame([(2,), (5,), (5,)], ('age',))
     >>> df2.agg(collect_list('age')).collect()
     [Row(collect_list(age)=[2, 5, 5])]
     """
 _collect_set_doc = """
     Aggregate function: returns a set of objects with duplicate elements eliminated.
+
+    .. note:: The function is non-deterministic because the order of collected results depends
+        on order of rows which may be non-deterministic after a shuffle.
 
     >>> df2 = spark.createDataFrame([(2,), (5,), (5,)], ('age',))
     >>> df2.agg(collect_set('age')).collect()
@@ -277,7 +283,8 @@ def approxCountDistinct(col, rsd=None):
 
 @since(2.1)
 def approx_count_distinct(col, rsd=None):
-    """Aggregate function: returns a new :class:`Column` for approximate distinct count of column `col`.
+    """Aggregate function: returns a new :class:`Column` for approximate distinct count of
+    column `col`.
 
     :param rsd: maximum estimation error allowed (default = 0.05). For rsd < 0.01, it is more
         efficient to use :func:`countDistinct`
@@ -340,7 +347,8 @@ def coalesce(*cols):
 
 @since(1.6)
 def corr(col1, col2):
-    """Returns a new :class:`Column` for the Pearson Correlation Coefficient for ``col1`` and ``col2``.
+    """Returns a new :class:`Column` for the Pearson Correlation Coefficient for ``col1``
+    and ``col2``.
 
     >>> a = range(20)
     >>> b = [2 * x for x in range(20)]
@@ -401,6 +409,9 @@ def first(col, ignorenulls=False):
 
     The function by default returns the first values it sees. It will return the first non-null
     value it sees when ignoreNulls is set to true. If all values are null, then null is returned.
+
+    .. note:: The function is non-deterministic because its results depends on order of rows which
+        may be non-deterministic after a shuffle.
     """
     sc = SparkContext._active_spark_context
     jc = sc._jvm.functions.first(_to_java_column(col), ignorenulls)
@@ -489,6 +500,9 @@ def last(col, ignorenulls=False):
 
     The function by default returns the last values it sees. It will return the last non-null
     value it sees when ignoreNulls is set to true. If all values are null, then null is returned.
+
+    .. note:: The function is non-deterministic because its results depends on order of rows
+        which may be non-deterministic after a shuffle.
     """
     sc = SparkContext._active_spark_context
     jc = sc._jvm.functions.last(_to_java_column(col), ignorenulls)
@@ -503,6 +517,8 @@ def monotonically_increasing_id():
     The current implementation puts the partition ID in the upper 31 bits, and the record number
     within each partition in the lower 33 bits. The assumption is that the data frame has
     less than 1 billion partitions, and each partition has less than 8 billion records.
+
+    .. note:: The function is non-deterministic because its result depends on partition IDs.
 
     As an example, consider a :class:`DataFrame` with two partitions, each with 3 records.
     This expression would return the following IDs:
@@ -536,6 +552,8 @@ def rand(seed=None):
     """Generates a random column with independent and identically distributed (i.i.d.) samples
     from U[0.0, 1.0].
 
+    .. note:: The function is non-deterministic in general case.
+
     >>> df.withColumn('rand', rand(seed=42) * 3).collect()
     [Row(age=2, name=u'Alice', rand=1.1568609015300986),
      Row(age=5, name=u'Bob', rand=1.403379671529166)]
@@ -553,6 +571,8 @@ def rand(seed=None):
 def randn(seed=None):
     """Generates a column with independent and identically distributed (i.i.d.) samples from
     the standard normal distribution.
+
+    .. note:: The function is non-deterministic in general case.
 
     >>> df.withColumn('randn', randn(seed=42)).collect()
     [Row(age=2, name=u'Alice', randn=-0.7556247885860078),
@@ -1090,8 +1110,11 @@ def add_months(start, months):
 @since(1.5)
 def months_between(date1, date2, roundOff=True):
     """
-    Returns the number of months between date1 and date2.
-    Unless `roundOff` is set to `False`, the result is rounded off to 8 digits.
+    Returns number of months between dates date1 and date2.
+    If date1 is later than date2, then the result is positive.
+    If date1 and date2 are on the same day of month, or both are the last day of month,
+    returns an integer (time of day will be ignored).
+    The result is rounded off to 8 digits unless `roundOff` is set to `False`.
 
     >>> df = spark.createDataFrame([('1997-02-28 10:30:00', '1996-10-30')], ['date1', 'date2'])
     >>> df.select(months_between(df.date1, df.date2).alias('months')).collect()
@@ -1260,30 +1283,68 @@ def unix_timestamp(timestamp=None, format='yyyy-MM-dd HH:mm:ss'):
 @since(1.5)
 def from_utc_timestamp(timestamp, tz):
     """
-    Given a timestamp like '2017-07-14 02:40:00.0', interprets it as a time in UTC, and renders
-    that time as a timestamp in the given time zone. For example, 'GMT+1' would yield
-    '2017-07-14 03:40:00.0'.
+    This is a common function for databases supporting TIMESTAMP WITHOUT TIMEZONE. This function
+    takes a timestamp which is timezone-agnostic, and interprets it as a timestamp in UTC, and
+    renders that timestamp as a timestamp in the given time zone.
 
-    >>> df = spark.createDataFrame([('1997-02-28 10:30:00',)], ['t'])
-    >>> df.select(from_utc_timestamp(df.t, "PST").alias('local_time')).collect()
+    However, timestamp in Spark represents number of microseconds from the Unix epoch, which is not
+    timezone-agnostic. So in Spark this function just shift the timestamp value from UTC timezone to
+    the given timezone.
+
+    This function may return confusing result if the input is a string with timezone, e.g.
+    '2018-03-13T06:18:23+00:00'. The reason is that, Spark firstly cast the string to timestamp
+    according to the timezone in the string, and finally display the result by converting the
+    timestamp to string according to the session local timezone.
+
+    :param timestamp: the column that contains timestamps
+    :param tz: a string that has the ID of timezone, e.g. "GMT", "America/Los_Angeles", etc
+
+    .. versionchanged:: 2.4
+       `tz` can take a :class:`Column` containing timezone ID strings.
+
+    >>> df = spark.createDataFrame([('1997-02-28 10:30:00', 'JST')], ['ts', 'tz'])
+    >>> df.select(from_utc_timestamp(df.ts, "PST").alias('local_time')).collect()
     [Row(local_time=datetime.datetime(1997, 2, 28, 2, 30))]
+    >>> df.select(from_utc_timestamp(df.ts, df.tz).alias('local_time')).collect()
+    [Row(local_time=datetime.datetime(1997, 2, 28, 19, 30))]
     """
     sc = SparkContext._active_spark_context
+    if isinstance(tz, Column):
+        tz = _to_java_column(tz)
     return Column(sc._jvm.functions.from_utc_timestamp(_to_java_column(timestamp), tz))
 
 
 @since(1.5)
 def to_utc_timestamp(timestamp, tz):
     """
-    Given a timestamp like '2017-07-14 02:40:00.0', interprets it as a time in the given time
-    zone, and renders that time as a timestamp in UTC. For example, 'GMT+1' would yield
-    '2017-07-14 01:40:00.0'.
+    This is a common function for databases supporting TIMESTAMP WITHOUT TIMEZONE. This function
+    takes a timestamp which is timezone-agnostic, and interprets it as a timestamp in the given
+    timezone, and renders that timestamp as a timestamp in UTC.
 
-    >>> df = spark.createDataFrame([('1997-02-28 10:30:00',)], ['ts'])
+    However, timestamp in Spark represents number of microseconds from the Unix epoch, which is not
+    timezone-agnostic. So in Spark this function just shift the timestamp value from the given
+    timezone to UTC timezone.
+
+    This function may return confusing result if the input is a string with timezone, e.g.
+    '2018-03-13T06:18:23+00:00'. The reason is that, Spark firstly cast the string to timestamp
+    according to the timezone in the string, and finally display the result by converting the
+    timestamp to string according to the session local timezone.
+
+    :param timestamp: the column that contains timestamps
+    :param tz: a string that has the ID of timezone, e.g. "GMT", "America/Los_Angeles", etc
+
+    .. versionchanged:: 2.4
+       `tz` can take a :class:`Column` containing timezone ID strings.
+
+    >>> df = spark.createDataFrame([('1997-02-28 10:30:00', 'JST')], ['ts', 'tz'])
     >>> df.select(to_utc_timestamp(df.ts, "PST").alias('utc_time')).collect()
     [Row(utc_time=datetime.datetime(1997, 2, 28, 18, 30))]
+    >>> df.select(to_utc_timestamp(df.ts, df.tz).alias('utc_time')).collect()
+    [Row(utc_time=datetime.datetime(1997, 2, 28, 1, 30))]
     """
     sc = SparkContext._active_spark_context
+    if isinstance(tz, Column):
+        tz = _to_java_column(tz)
     return Column(sc._jvm.functions.to_utc_timestamp(_to_java_column(timestamp), tz))
 
 
@@ -1630,31 +1691,45 @@ def repeat(col, n):
 
 @since(1.5)
 @ignore_unicode_prefix
-def split(str, pattern):
+def split(str, pattern, limit=-1):
     """
-    Splits str around pattern (pattern is a regular expression).
+    Splits str around matches of the given pattern.
 
-    .. note:: pattern is a string represent the regular expression.
+    :param str: a string expression to split
+    :param pattern: a string representing a regular expression. The regex string should be
+        a Java regular expression.
+    :param limit: an integer which controls the number of times `pattern` is applied.
 
-    >>> df = spark.createDataFrame([('ab12cd',)], ['s',])
-    >>> df.select(split(df.s, '[0-9]+').alias('s')).collect()
-    [Row(s=[u'ab', u'cd'])]
+        * ``limit > 0``: The resulting array's length will not be more than `limit`, and the
+                         resulting array's last entry will contain all input beyond the last
+                         matched pattern.
+        * ``limit <= 0``: `pattern` will be applied as many times as possible, and the resulting
+                          array can be of any size.
+
+    .. versionchanged:: 3.0
+       `split` now takes an optional `limit` field. If not provided, default limit value is -1.
+
+    >>> df = spark.createDataFrame([('oneAtwoBthreeC',)], ['s',])
+    >>> df.select(split(df.s, '[ABC]', 2).alias('s')).collect()
+    [Row(s=[u'one', u'twoBthreeC'])]
+    >>> df.select(split(df.s, '[ABC]', -1).alias('s')).collect()
+    [Row(s=[u'one', u'two', u'three', u''])]
     """
     sc = SparkContext._active_spark_context
-    return Column(sc._jvm.functions.split(_to_java_column(str), pattern))
+    return Column(sc._jvm.functions.split(_to_java_column(str), pattern, limit))
 
 
 @ignore_unicode_prefix
 @since(1.5)
 def regexp_extract(str, pattern, idx):
-    """Extract a specific group matched by a Java regex, from the specified string column.
+    r"""Extract a specific group matched by a Java regex, from the specified string column.
     If the regex did not match, or the specified group did not match, an empty string is returned.
 
     >>> df = spark.createDataFrame([('100-200',)], ['str'])
-    >>> df.select(regexp_extract('str', '(\d+)-(\d+)', 1).alias('d')).collect()
+    >>> df.select(regexp_extract('str', r'(\d+)-(\d+)', 1).alias('d')).collect()
     [Row(d=u'100')]
     >>> df = spark.createDataFrame([('foo',)], ['str'])
-    >>> df.select(regexp_extract('str', '(\d+)', 1).alias('d')).collect()
+    >>> df.select(regexp_extract('str', r'(\d+)', 1).alias('d')).collect()
     [Row(d=u'')]
     >>> df = spark.createDataFrame([('aaaac',)], ['str'])
     >>> df.select(regexp_extract('str', '(a+)(b)?(c)', 2).alias('d')).collect()
@@ -1668,10 +1743,10 @@ def regexp_extract(str, pattern, idx):
 @ignore_unicode_prefix
 @since(1.5)
 def regexp_replace(str, pattern, replacement):
-    """Replace all substrings of the specified string value that match regexp with rep.
+    r"""Replace all substrings of the specified string value that match regexp with rep.
 
     >>> df = spark.createDataFrame([('100-200',)], ['str'])
-    >>> df.select(regexp_replace('str', '(\\d+)', '--').alias('d')).collect()
+    >>> df.select(regexp_replace('str', r'(\d+)', '--').alias('d')).collect()
     [Row(d=u'-----')]
     """
     sc = SparkContext._active_spark_context
@@ -1798,6 +1873,25 @@ def create_map(*cols):
     return Column(jc)
 
 
+@since(2.4)
+def map_from_arrays(col1, col2):
+    """Creates a new map from two arrays.
+
+    :param col1: name of column containing a set of keys. All elements should not be null
+    :param col2: name of column containing a set of values
+
+    >>> df = spark.createDataFrame([([2, 5], ['a', 'b'])], ['k', 'v'])
+    >>> df.select(map_from_arrays(df.k, df.v).alias("map")).show()
+    +----------------+
+    |             map|
+    +----------------+
+    |[2 -> a, 5 -> b]|
+    +----------------+
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.map_from_arrays(_to_java_column(col1), _to_java_column(col2)))
+
+
 @since(1.4)
 def array(*cols):
     """Creates a new array column.
@@ -1832,6 +1926,21 @@ def array_contains(col, value):
     """
     sc = SparkContext._active_spark_context
     return Column(sc._jvm.functions.array_contains(_to_java_column(col), value))
+
+
+@since(2.4)
+def arrays_overlap(a1, a2):
+    """
+    Collection function: returns true if the arrays contain any common non-null element; if not,
+    returns null if both the arrays are non-empty and any of them contains a null element; returns
+    false otherwise.
+
+    >>> df = spark.createDataFrame([(["a", "b"], ["b", "c"]), (["a"], ["b", "c"])], ['x', 'y'])
+    >>> df.select(arrays_overlap(df.x, df.y).alias("overlap")).collect()
+    [Row(overlap=True), Row(overlap=False)]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.arrays_overlap(_to_java_column(a1), _to_java_column(a2)))
 
 
 @since(2.4)
@@ -1926,6 +2035,93 @@ def element_at(col, extraction):
     """
     sc = SparkContext._active_spark_context
     return Column(sc._jvm.functions.element_at(_to_java_column(col), extraction))
+
+
+@since(2.4)
+def array_remove(col, element):
+    """
+    Collection function: Remove all elements that equal to element from the given array.
+
+    :param col: name of column containing array
+    :param element: element to be removed from the array
+
+    >>> df = spark.createDataFrame([([1, 2, 3, 1, 1],), ([],)], ['data'])
+    >>> df.select(array_remove(df.data, 1)).collect()
+    [Row(array_remove(data, 1)=[2, 3]), Row(array_remove(data, 1)=[])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.array_remove(_to_java_column(col), element))
+
+
+@since(2.4)
+def array_distinct(col):
+    """
+    Collection function: removes duplicate values from the array.
+    :param col: name of column or expression
+
+    >>> df = spark.createDataFrame([([1, 2, 3, 2],), ([4, 5, 5, 4],)], ['data'])
+    >>> df.select(array_distinct(df.data)).collect()
+    [Row(array_distinct(data)=[1, 2, 3]), Row(array_distinct(data)=[4, 5])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.array_distinct(_to_java_column(col)))
+
+
+@ignore_unicode_prefix
+@since(2.4)
+def array_intersect(col1, col2):
+    """
+    Collection function: returns an array of the elements in the intersection of col1 and col2,
+    without duplicates.
+
+    :param col1: name of column containing array
+    :param col2: name of column containing array
+
+    >>> from pyspark.sql import Row
+    >>> df = spark.createDataFrame([Row(c1=["b", "a", "c"], c2=["c", "d", "a", "f"])])
+    >>> df.select(array_intersect(df.c1, df.c2)).collect()
+    [Row(array_intersect(c1, c2)=[u'a', u'c'])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.array_intersect(_to_java_column(col1), _to_java_column(col2)))
+
+
+@ignore_unicode_prefix
+@since(2.4)
+def array_union(col1, col2):
+    """
+    Collection function: returns an array of the elements in the union of col1 and col2,
+    without duplicates.
+
+    :param col1: name of column containing array
+    :param col2: name of column containing array
+
+    >>> from pyspark.sql import Row
+    >>> df = spark.createDataFrame([Row(c1=["b", "a", "c"], c2=["c", "d", "a", "f"])])
+    >>> df.select(array_union(df.c1, df.c2)).collect()
+    [Row(array_union(c1, c2)=[u'b', u'a', u'c', u'd', u'f'])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.array_union(_to_java_column(col1), _to_java_column(col2)))
+
+
+@ignore_unicode_prefix
+@since(2.4)
+def array_except(col1, col2):
+    """
+    Collection function: returns an array of the elements in col1 but not in col2,
+    without duplicates.
+
+    :param col1: name of column containing array
+    :param col2: name of column containing array
+
+    >>> from pyspark.sql import Row
+    >>> df = spark.createDataFrame([Row(c1=["b", "a", "c"], c2=["c", "d", "a", "f"])])
+    >>> df.select(array_except(df.c1, df.c2)).collect()
+    [Row(array_except(c1, c2)=[u'b'])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.array_except(_to_java_column(col1), _to_java_column(col2)))
 
 
 @since(1.4)
@@ -2074,12 +2270,13 @@ def json_tuple(col, *fields):
     return Column(jc)
 
 
+@ignore_unicode_prefix
 @since(2.1)
 def from_json(col, schema, options={}):
     """
-    Parses a column containing a JSON string into a :class:`StructType` or :class:`ArrayType`
-    of :class:`StructType`\\s with the specified schema. Returns `null`, in the case of an
-    unparseable string.
+    Parses a column containing a JSON string into a :class:`MapType` with :class:`StringType`
+    as keys type, :class:`StructType` or :class:`ArrayType` with
+    the specified schema. Returns `null`, in the case of an unparseable string.
 
     :param col: string column in json format
     :param schema: a StructType or ArrayType of StructType to use when parsing the json column.
@@ -2096,16 +2293,28 @@ def from_json(col, schema, options={}):
     [Row(json=Row(a=1))]
     >>> df.select(from_json(df.value, "a INT").alias("json")).collect()
     [Row(json=Row(a=1))]
+    >>> df.select(from_json(df.value, "MAP<STRING,INT>").alias("json")).collect()
+    [Row(json={u'a': 1})]
     >>> data = [(1, '''[{"a": 1}]''')]
     >>> schema = ArrayType(StructType([StructField("a", IntegerType())]))
     >>> df = spark.createDataFrame(data, ("key", "value"))
     >>> df.select(from_json(df.value, schema).alias("json")).collect()
     [Row(json=[Row(a=1)])]
+    >>> schema = schema_of_json(lit('''{"a": 0}'''))
+    >>> df.select(from_json(df.value, schema).alias("json")).collect()
+    [Row(json=Row(a=1))]
+    >>> data = [(1, '''[1, 2, 3]''')]
+    >>> schema = ArrayType(IntegerType())
+    >>> df = spark.createDataFrame(data, ("key", "value"))
+    >>> df.select(from_json(df.value, schema).alias("json")).collect()
+    [Row(json=[1, 2, 3])]
     """
 
     sc = SparkContext._active_spark_context
     if isinstance(schema, DataType):
         schema = schema.json()
+    elif isinstance(schema, Column):
+        schema = _to_java_column(schema)
     jc = sc._jvm.functions.from_json(_to_java_column(col), schema, options)
     return Column(jc)
 
@@ -2114,13 +2323,13 @@ def from_json(col, schema, options={}):
 @since(2.1)
 def to_json(col, options={}):
     """
-    Converts a column containing a :class:`StructType`, :class:`ArrayType` of
-    :class:`StructType`\\s, a :class:`MapType` or :class:`ArrayType` of :class:`MapType`\\s
+    Converts a column containing a :class:`StructType`, :class:`ArrayType` or a :class:`MapType`
     into a JSON string. Throws an exception, in the case of an unsupported type.
 
-    :param col: name of column containing the struct, array of the structs, the map or
-        array of the maps.
-    :param options: options to control converting. accepts the same options as the json datasource
+    :param col: name of column containing a struct, an array or a map.
+    :param options: options to control converting. accepts the same options as the JSON datasource.
+                    Additionally the function supports the `pretty` option which enables
+                    pretty JSON generation.
 
     >>> from pyspark.sql import Row
     >>> from pyspark.sql.types import *
@@ -2140,10 +2349,43 @@ def to_json(col, options={}):
     >>> df = spark.createDataFrame(data, ("key", "value"))
     >>> df.select(to_json(df.value).alias("json")).collect()
     [Row(json=u'[{"name":"Alice"},{"name":"Bob"}]')]
+    >>> data = [(1, ["Alice", "Bob"])]
+    >>> df = spark.createDataFrame(data, ("key", "value"))
+    >>> df.select(to_json(df.value).alias("json")).collect()
+    [Row(json=u'["Alice","Bob"]')]
     """
 
     sc = SparkContext._active_spark_context
     jc = sc._jvm.functions.to_json(_to_java_column(col), options)
+    return Column(jc)
+
+
+@ignore_unicode_prefix
+@since(2.4)
+def schema_of_json(col, options={}):
+    """
+    Parses a column containing a JSON string and infers its schema in DDL format.
+
+    :param col: string column in json format
+    :param options: options to control parsing. accepts the same options as the JSON datasource
+
+    .. versionchanged:: 3.0
+       It accepts `options` parameter to control schema inferring.
+
+    >>> from pyspark.sql.types import *
+    >>> data = [(1, '{"a": 1}')]
+    >>> df = spark.createDataFrame(data, ("key", "value"))
+    >>> df.select(schema_of_json(df.value).alias("json")).collect()
+    [Row(json=u'struct<a:bigint>')]
+    >>> df.select(schema_of_json(lit('{"a": 0}')).alias("json")).collect()
+    [Row(json=u'struct<a:bigint>')]
+    >>> schema = schema_of_json(lit('{a: 1}'), {'allowUnquotedFieldNames':'true'})
+    >>> df.select(schema.alias("json")).collect()
+    [Row(json=u'struct<a:bigint>')]
+    """
+
+    sc = SparkContext._active_spark_context
+    jc = sc._jvm.functions.schema_of_json(_to_java_column(col), options)
     return Column(jc)
 
 
@@ -2228,6 +2470,23 @@ def array_sort(col):
     return Column(sc._jvm.functions.array_sort(_to_java_column(col)))
 
 
+@since(2.4)
+def shuffle(col):
+    """
+    Collection function: Generates a random permutation of the given array.
+
+    .. note:: The function is non-deterministic.
+
+    :param col: name of column or expression
+
+    >>> df = spark.createDataFrame([([1, 20, 3, 5],), ([1, 20, None, 3],)], ['data'])
+    >>> df.select(shuffle(df.data).alias('s')).collect()  # doctest: +SKIP
+    [Row(s=[3, 1, 5, 20]), Row(s=[20, None, 3, 1])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.shuffle(_to_java_column(col)))
+
+
 @since(1.5)
 @ignore_unicode_prefix
 def reverse(col):
@@ -2304,6 +2563,121 @@ def map_values(col):
     return Column(sc._jvm.functions.map_values(_to_java_column(col)))
 
 
+@since(2.4)
+def map_entries(col):
+    """
+    Collection function: Returns an unordered array of all entries in the given map.
+
+    :param col: name of column or expression
+
+    >>> from pyspark.sql.functions import map_entries
+    >>> df = spark.sql("SELECT map(1, 'a', 2, 'b') as data")
+    >>> df.select(map_entries("data").alias("entries")).show()
+    +----------------+
+    |         entries|
+    +----------------+
+    |[[1, a], [2, b]]|
+    +----------------+
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.map_entries(_to_java_column(col)))
+
+
+@since(2.4)
+def map_from_entries(col):
+    """
+    Collection function: Returns a map created from the given array of entries.
+
+    :param col: name of column or expression
+
+    >>> from pyspark.sql.functions import map_from_entries
+    >>> df = spark.sql("SELECT array(struct(1, 'a'), struct(2, 'b')) as data")
+    >>> df.select(map_from_entries("data").alias("map")).show()
+    +----------------+
+    |             map|
+    +----------------+
+    |[1 -> a, 2 -> b]|
+    +----------------+
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.map_from_entries(_to_java_column(col)))
+
+
+@ignore_unicode_prefix
+@since(2.4)
+def array_repeat(col, count):
+    """
+    Collection function: creates an array containing a column repeated count times.
+
+    >>> df = spark.createDataFrame([('ab',)], ['data'])
+    >>> df.select(array_repeat(df.data, 3).alias('r')).collect()
+    [Row(r=[u'ab', u'ab', u'ab'])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.array_repeat(_to_java_column(col), count))
+
+
+@since(2.4)
+def arrays_zip(*cols):
+    """
+    Collection function: Returns a merged array of structs in which the N-th struct contains all
+    N-th values of input arrays.
+
+    :param cols: columns of arrays to be merged.
+
+    >>> from pyspark.sql.functions import arrays_zip
+    >>> df = spark.createDataFrame([(([1, 2, 3], [2, 3, 4]))], ['vals1', 'vals2'])
+    >>> df.select(arrays_zip(df.vals1, df.vals2).alias('zipped')).collect()
+    [Row(zipped=[Row(vals1=1, vals2=2), Row(vals1=2, vals2=3), Row(vals1=3, vals2=4)])]
+    """
+    sc = SparkContext._active_spark_context
+    return Column(sc._jvm.functions.arrays_zip(_to_seq(sc, cols, _to_java_column)))
+
+
+@since(2.4)
+def map_concat(*cols):
+    """Returns the union of all the given maps.
+
+    :param cols: list of column names (string) or list of :class:`Column` expressions
+
+    >>> from pyspark.sql.functions import map_concat
+    >>> df = spark.sql("SELECT map(1, 'a', 2, 'b') as map1, map(3, 'c', 1, 'd') as map2")
+    >>> df.select(map_concat("map1", "map2").alias("map3")).show(truncate=False)
+    +--------------------------------+
+    |map3                            |
+    +--------------------------------+
+    |[1 -> a, 2 -> b, 3 -> c, 1 -> d]|
+    +--------------------------------+
+    """
+    sc = SparkContext._active_spark_context
+    if len(cols) == 1 and isinstance(cols[0], (list, set)):
+        cols = cols[0]
+    jc = sc._jvm.functions.map_concat(_to_seq(sc, cols, _to_java_column))
+    return Column(jc)
+
+
+@since(2.4)
+def sequence(start, stop, step=None):
+    """
+    Generate a sequence of integers from `start` to `stop`, incrementing by `step`.
+    If `step` is not set, incrementing by 1 if `start` is less than or equal to `stop`,
+    otherwise -1.
+
+    >>> df1 = spark.createDataFrame([(-2, 2)], ('C1', 'C2'))
+    >>> df1.select(sequence('C1', 'C2').alias('r')).collect()
+    [Row(r=[-2, -1, 0, 1, 2])]
+    >>> df2 = spark.createDataFrame([(4, -4, -2)], ('C1', 'C2', 'C3'))
+    >>> df2.select(sequence('C1', 'C2', 'C3').alias('r')).collect()
+    [Row(r=[4, 2, 0, -2, -4])]
+    """
+    sc = SparkContext._active_spark_context
+    if step is None:
+        return Column(sc._jvm.functions.sequence(_to_java_column(start), _to_java_column(stop)))
+    else:
+        return Column(sc._jvm.functions.sequence(
+            _to_java_column(start), _to_java_column(stop), _to_java_column(step)))
+
+
 # ---------------------------- User Defined Function ----------------------------------
 
 class PandasUDFType(object):
@@ -2359,6 +2733,39 @@ def udf(f=None, returnType=StringType()):
     |         8|      JOHN DOE|          22|
     +----------+--------------+------------+
     """
+
+    # The following table shows most of Python data and SQL type conversions in normal UDFs that
+    # are not yet visible to the user. Some of behaviors are buggy and might be changed in the near
+    # future. The table might have to be eventually documented externally.
+    # Please see SPARK-25666's PR to see the codes in order to generate the table below.
+    #
+    # +-----------------------------+--------------+----------+------+-------+---------------+---------------+--------------------+-----------------------------+----------+----------------------+---------+--------------------+-----------------+------------+--------------+------------------+----------------------+  # noqa
+    # |SQL Type \ Python Value(Type)|None(NoneType)|True(bool)|1(int)|1(long)|         a(str)|     a(unicode)|    1970-01-01(date)|1970-01-01 00:00:00(datetime)|1.0(float)|array('i', [1])(array)|[1](list)|         (1,)(tuple)|   ABC(bytearray)|  1(Decimal)|{'a': 1}(dict)|Row(kwargs=1)(Row)|Row(namedtuple=1)(Row)|  # noqa
+    # +-----------------------------+--------------+----------+------+-------+---------------+---------------+--------------------+-----------------------------+----------+----------------------+---------+--------------------+-----------------+------------+--------------+------------------+----------------------+  # noqa
+    # |                      boolean|          None|      True|  None|   None|           None|           None|                None|                         None|      None|                  None|     None|                None|             None|        None|          None|                 X|                     X|  # noqa
+    # |                      tinyint|          None|      None|     1|      1|           None|           None|                None|                         None|      None|                  None|     None|                None|             None|        None|          None|                 X|                     X|  # noqa
+    # |                     smallint|          None|      None|     1|      1|           None|           None|                None|                         None|      None|                  None|     None|                None|             None|        None|          None|                 X|                     X|  # noqa
+    # |                          int|          None|      None|     1|      1|           None|           None|                None|                         None|      None|                  None|     None|                None|             None|        None|          None|                 X|                     X|  # noqa
+    # |                       bigint|          None|      None|     1|      1|           None|           None|                None|                         None|      None|                  None|     None|                None|             None|        None|          None|                 X|                     X|  # noqa
+    # |                       string|          None|   u'true'|  u'1'|   u'1'|           u'a'|           u'a'|u'java.util.Grego...|         u'java.util.Grego...|    u'1.0'|        u'[I@24a83055'|   u'[1]'|u'[Ljava.lang.Obj...|   u'[B@49093632'|        u'1'|      u'{a=1}'|                 X|                     X|  # noqa
+    # |                         date|          None|         X|     X|      X|              X|              X|datetime.date(197...|         datetime.date(197...|         X|                     X|        X|                   X|                X|           X|             X|                 X|                     X|  # noqa
+    # |                    timestamp|          None|         X|     X|      X|              X|              X|                   X|         datetime.datetime...|         X|                     X|        X|                   X|                X|           X|             X|                 X|                     X|  # noqa
+    # |                        float|          None|      None|  None|   None|           None|           None|                None|                         None|       1.0|                  None|     None|                None|             None|        None|          None|                 X|                     X|  # noqa
+    # |                       double|          None|      None|  None|   None|           None|           None|                None|                         None|       1.0|                  None|     None|                None|             None|        None|          None|                 X|                     X|  # noqa
+    # |                   array<int>|          None|      None|  None|   None|           None|           None|                None|                         None|      None|                   [1]|      [1]|                 [1]|     [65, 66, 67]|        None|          None|                 X|                     X|  # noqa
+    # |                       binary|          None|      None|  None|   None|bytearray(b'a')|bytearray(b'a')|                None|                         None|      None|                  None|     None|                None|bytearray(b'ABC')|        None|          None|                 X|                     X|  # noqa
+    # |                decimal(10,0)|          None|      None|  None|   None|           None|           None|                None|                         None|      None|                  None|     None|                None|             None|Decimal('1')|          None|                 X|                     X|  # noqa
+    # |              map<string,int>|          None|      None|  None|   None|           None|           None|                None|                         None|      None|                  None|     None|                None|             None|        None|     {u'a': 1}|                 X|                     X|  # noqa
+    # |               struct<_1:int>|          None|         X|     X|      X|              X|              X|                   X|                            X|         X|                     X|Row(_1=1)|           Row(_1=1)|                X|           X|  Row(_1=None)|         Row(_1=1)|             Row(_1=1)|  # noqa
+    # +-----------------------------+--------------+----------+------+-------+---------------+---------------+--------------------+-----------------------------+----------+----------------------+---------+--------------------+-----------------+------------+--------------+------------------+----------------------+  # noqa
+    #
+    # Note: DDL formatted string is used for 'SQL Type' for simplicity. This string can be
+    #       used in `returnType`.
+    # Note: The values inside of the table are generated by `repr`.
+    # Note: Python 2 is used to generate this table since it is used to check the backward
+    #       compatibility often in practice.
+    # Note: 'X' means it throws an exception during the conversion.
+
     # decorator @udf, @udf(), @udf(dataType())
     if f is None or isinstance(f, (str, DataType)):
         # If DataType has been passed as a positional argument
@@ -2382,13 +2789,16 @@ def pandas_udf(f=None, returnType=None, functionType=None):
     :param functionType: an enum value in :class:`pyspark.sql.functions.PandasUDFType`.
                          Default: SCALAR.
 
+    .. note:: Experimental
+
     The function type of the UDF can be one of the following:
 
     1. SCALAR
 
        A scalar UDF defines a transformation: One or more `pandas.Series` -> A `pandas.Series`.
-       The returnType should be a primitive data type, e.g., :class:`DoubleType`.
        The length of the returned `pandas.Series` must be of the same as the input `pandas.Series`.
+
+       :class:`MapType`, :class:`StructType` are currently not supported as output types.
 
        Scalar UDFs are used with :meth:`pyspark.sql.DataFrame.withColumn` and
        :meth:`pyspark.sql.DataFrame.select`.
@@ -2423,7 +2833,9 @@ def pandas_udf(f=None, returnType=None, functionType=None):
 
        A grouped map UDF defines transformation: A `pandas.DataFrame` -> A `pandas.DataFrame`
        The returnType should be a :class:`StructType` describing the schema of the returned
-       `pandas.DataFrame`.
+       `pandas.DataFrame`. The column labels of the returned `pandas.DataFrame` must either match
+       the field names in the defined returnType schema if specified as strings, or match the
+       field data types by position if not strings, e.g. integer indices.
        The length of the returned `pandas.DataFrame` can be arbitrary.
 
        Grouped map UDFs are used with :meth:`pyspark.sql.GroupedData.apply`.
@@ -2448,14 +2860,14 @@ def pandas_udf(f=None, returnType=None, functionType=None):
        +---+-------------------+
 
        Alternatively, the user can define a function that takes two arguments.
-       In this case, the grouping key will be passed as the first argument and the data will
-       be passed as the second argument. The grouping key will be passed as a tuple of numpy
+       In this case, the grouping key(s) will be passed as the first argument and the data will
+       be passed as the second argument. The grouping key(s) will be passed as a tuple of numpy
        data types, e.g., `numpy.int32` and `numpy.float64`. The data will still be passed in
        as a `pandas.DataFrame` containing all columns from the original Spark DataFrame.
-       This is useful when the user does not want to hardcode grouping key in the function.
+       This is useful when the user does not want to hardcode grouping key(s) in the function.
 
-       >>> from pyspark.sql.functions import pandas_udf, PandasUDFType
        >>> import pandas as pd  # doctest: +SKIP
+       >>> from pyspark.sql.functions import pandas_udf, PandasUDFType
        >>> df = spark.createDataFrame(
        ...     [(1, 1.0), (1, 2.0), (2, 3.0), (2, 5.0), (2, 10.0)],
        ...     ("id", "v"))  # doctest: +SKIP
@@ -2471,6 +2883,28 @@ def pandas_udf(f=None, returnType=None, functionType=None):
        |  1|1.5|
        |  2|6.0|
        +---+---+
+       >>> @pandas_udf(
+       ...    "id long, `ceil(v / 2)` long, v double",
+       ...    PandasUDFType.GROUPED_MAP)  # doctest: +SKIP
+       >>> def sum_udf(key, pdf):
+       ...     # key is a tuple of two numpy.int64s, which is the values
+       ...     # of 'id' and 'ceil(df.v / 2)' for the current group
+       ...     return pd.DataFrame([key + (pdf.v.sum(),)])
+       >>> df.groupby(df.id, ceil(df.v / 2)).apply(sum_udf).show()  # doctest: +SKIP
+       +---+-----------+----+
+       | id|ceil(v / 2)|   v|
+       +---+-----------+----+
+       |  2|          5|10.0|
+       |  1|          1| 3.0|
+       |  2|          3| 5.0|
+       |  2|          2| 3.0|
+       +---+-----------+----+
+
+       .. note:: If returning a new `pandas.DataFrame` constructed with a dictionary, it is
+           recommended to explicitly index the columns by name to ensure the positions are correct,
+           or alternatively use an `OrderedDict`.
+           For example, `pd.DataFrame({'id': ids, 'a': data}, columns=['id', 'a'])` or
+           `pd.DataFrame(OrderedDict([('id', ids), ('a', data)]))`.
 
        .. seealso:: :meth:`pyspark.sql.GroupedData.apply`
 
@@ -2481,10 +2915,12 @@ def pandas_udf(f=None, returnType=None, functionType=None):
        The returned scalar can be either a python primitive type, e.g., `int` or `float`
        or a numpy data type, e.g., `numpy.int64` or `numpy.float64`.
 
-       :class:`ArrayType`, :class:`MapType` and :class:`StructType` are currently not supported as
-       output types.
+       :class:`MapType` and :class:`StructType` are currently not supported as output types.
 
-       Group aggregate UDFs are used with :meth:`pyspark.sql.GroupedData.agg`
+       Group aggregate UDFs are used with :meth:`pyspark.sql.GroupedData.agg` and
+       :class:`pyspark.sql.Window`
+
+       This example shows using grouped aggregated UDFs with groupby:
 
        >>> from pyspark.sql.functions import pandas_udf, PandasUDFType
        >>> df = spark.createDataFrame(
@@ -2501,7 +2937,32 @@ def pandas_udf(f=None, returnType=None, functionType=None):
        |  2|        6.0|
        +---+-----------+
 
-       .. seealso:: :meth:`pyspark.sql.GroupedData.agg`
+       This example shows using grouped aggregated UDFs as window functions. Note that only
+       unbounded window frame is supported at the moment:
+
+       >>> from pyspark.sql.functions import pandas_udf, PandasUDFType
+       >>> from pyspark.sql import Window
+       >>> df = spark.createDataFrame(
+       ...     [(1, 1.0), (1, 2.0), (2, 3.0), (2, 5.0), (2, 10.0)],
+       ...     ("id", "v"))
+       >>> @pandas_udf("double", PandasUDFType.GROUPED_AGG)  # doctest: +SKIP
+       ... def mean_udf(v):
+       ...     return v.mean()
+       >>> w = Window \\
+       ...     .partitionBy('id') \\
+       ...     .rowsBetween(Window.unboundedPreceding, Window.unboundedFollowing)
+       >>> df.withColumn('mean_v', mean_udf(df['v']).over(w)).show()  # doctest: +SKIP
+       +---+----+------+
+       | id|   v|mean_v|
+       +---+----+------+
+       |  1| 1.0|   1.5|
+       |  1| 2.0|   1.5|
+       |  2| 3.0|   6.0|
+       |  2| 5.0|   6.0|
+       |  2|10.0|   6.0|
+       +---+----+------+
+
+       .. seealso:: :meth:`pyspark.sql.GroupedData.agg` and :class:`pyspark.sql.Window`
 
     .. note:: The user-defined functions are considered deterministic by default. Due to
         optimization, duplicate invocations may be eliminated or the function may even be invoked
@@ -2520,6 +2981,12 @@ def pandas_udf(f=None, returnType=None, functionType=None):
         can fail on special rows, the workaround is to incorporate the condition into the functions.
 
     .. note:: The user-defined functions do not take keyword arguments on the calling side.
+
+    .. note:: The data type of returned `pandas.Series` from the user-defined functions should be
+        matched with defined returnType (see :meth:`types.to_arrow_type` and
+        :meth:`types.from_arrow_type`). When there is mismatch between them, Spark might do
+        conversion on returned data. The conversion is not guaranteed to be correct and results
+        should be checked for accuracy by users.
     """
     # decorator @pandas_udf(returnType, functionType)
     is_decorator = f is None or isinstance(f, (str, DataType))
@@ -2565,6 +3032,7 @@ def pandas_udf(f=None, returnType=None, functionType=None):
 blacklist = ['map', 'since', 'ignore_unicode_prefix']
 __all__ = [k for k, v in globals().items()
            if not k.startswith('_') and k[0].islower() and callable(v) and k not in blacklist]
+__all__ += ["PandasUDFType"]
 __all__.sort()
 
 
