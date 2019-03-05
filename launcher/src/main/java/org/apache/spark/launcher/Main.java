@@ -17,6 +17,7 @@
 
 package org.apache.spark.launcher;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -57,11 +58,17 @@ class Main {
     String className = args.remove(0);
 
     boolean printLaunchCommand = !isEmpty(System.getenv("SPARK_PRINT_LAUNCH_COMMAND"));
-    AbstractCommandBuilder builder;
+    Map<String, String> env = new HashMap<>();
+    List<String> cmd;
     if (className.equals("org.apache.spark.deploy.SparkSubmit")) {
       try {
+<<<<<<< HEAD
         // 实例化 CommandBuilder 的过程，其实就是识别解析输入的参数的工程，并对不同参数分类和规范化
         builder = new SparkSubmitCommandBuilder(args);
+=======
+        AbstractCommandBuilder builder = new SparkSubmitCommandBuilder(args);
+        cmd = buildCommand(builder, env, printLaunchCommand);
+>>>>>>> 7857c6d633f3df426a6ac4618316eb83b1cefe2b
       } catch (IllegalArgumentException e) {
         printLaunchCommand = false;
         System.err.println("Error: " + e.getMessage());
@@ -80,9 +87,11 @@ class Main {
           help.add(parser.className);
         }
         help.add(parser.USAGE_ERROR);
-        builder = new SparkSubmitCommandBuilder(help);
+        AbstractCommandBuilder builder = new SparkSubmitCommandBuilder(help);
+        cmd = buildCommand(builder, env, printLaunchCommand);
       }
     } else {
+<<<<<<< HEAD
       builder = new SparkClassCommandBuilder(className, args);
     }
 
@@ -92,6 +101,10 @@ class Main {
     if (printLaunchCommand) {
       System.err.println("Spark Command: " + join(" ", cmd));
       System.err.println("========================================");
+=======
+      AbstractCommandBuilder builder = new SparkClassCommandBuilder(className, args);
+      cmd = buildCommand(builder, env, printLaunchCommand);
+>>>>>>> 7857c6d633f3df426a6ac4618316eb83b1cefe2b
     }
 
     if (isWindows()) {
@@ -104,6 +117,22 @@ class Main {
         System.out.print('\0');
       }
     }
+  }
+
+  /**
+   * Prepare spark commands with the appropriate command builder.
+   * If printLaunchCommand is set then the commands will be printed to the stderr.
+   */
+  private static List<String> buildCommand(
+      AbstractCommandBuilder builder,
+      Map<String, String> env,
+      boolean printLaunchCommand) throws IOException, IllegalArgumentException {
+    List<String> cmd = builder.buildCommand(env);
+    if (printLaunchCommand) {
+      System.err.println("Spark Command: " + join(" ", cmd));
+      System.err.println("========================================");
+    }
+    return cmd;
   }
 
   /**

@@ -90,7 +90,8 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
 
   final List<String> userArgs;
   private final List<String> parsedArgs;
-  private final boolean requiresAppResource;
+  // Special command means no appResource and no mainClass required
+  private final boolean isSpecialCommand;
   private final boolean isExample;
 
   /**
@@ -106,7 +107,7 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
    * spark-submit argument list to be modified after creation.
    */
   SparkSubmitCommandBuilder() {
-    this.requiresAppResource = true;
+    this.isSpecialCommand = false;
     this.isExample = false;
     this.parsedArgs = new ArrayList<>();
     this.userArgs = new ArrayList<>();
@@ -139,6 +140,7 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
 
         case RUN_EXAMPLE:
           isExample = true;
+          appResource = SparkLauncher.NO_RESOURCE;
           submitArgs = args.subList(1, args.size());
       }
 
@@ -146,19 +148,19 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
       OptionParser parser = new OptionParser(true);
       // 对具体传入的不同类型的参数进行解析，然后赋值给本类对应的成员变量
       parser.parse(submitArgs);
-      this.requiresAppResource = parser.requiresAppResource;
+      this.isSpecialCommand = parser.isSpecialCommand;
     } else {
       this.isExample = isExample;
-      this.requiresAppResource = false;
+      this.isSpecialCommand = true;
     }
   }
 
   @Override
   public List<String> buildCommand(Map<String, String> env)
       throws IOException, IllegalArgumentException {
-    if (PYSPARK_SHELL.equals(appResource) && requiresAppResource) {
+    if (PYSPARK_SHELL.equals(appResource) && !isSpecialCommand) {
       return buildPySparkShellCommand(env);
-    } else if (SPARKR_SHELL.equals(appResource) && requiresAppResource) {
+    } else if (SPARKR_SHELL.equals(appResource) && !isSpecialCommand) {
       return buildSparkRCommand(env);
     } else {
       return buildSparkSubmitCommand(env);
@@ -168,18 +170,18 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
   List<String> buildSparkSubmitArgs() {
     List<String> args = new ArrayList<>();
     OptionParser parser = new OptionParser(false);
-    final boolean requiresAppResource;
+    final boolean isSpecialCommand;
 
     // If the user args array is not empty, we need to parse it to detect exactly what
     // the user is trying to run, so that checks below are correct.
     if (!userArgs.isEmpty()) {
       parser.parse(userArgs);
-      requiresAppResource = parser.requiresAppResource;
+      isSpecialCommand = parser.isSpecialCommand;
     } else {
-      requiresAppResource = this.requiresAppResource;
+      isSpecialCommand = this.isSpecialCommand;
     }
 
-    if (!allowsMixedArguments && requiresAppResource) {
+    if (!allowsMixedArguments && !isSpecialCommand) {
       checkArgument(appResource != null, "Missing application resource.");
     }
 
@@ -231,7 +233,7 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
       args.add(join(",", pyFiles));
     }
 
-    if (isExample) {
+    if (isExample && !isSpecialCommand) {
       checkArgument(mainClass != null, "Missing example class name.");
     }
 
@@ -423,8 +425,12 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
 
   private class OptionParser extends SparkSubmitOptionParser {
 
+<<<<<<< HEAD
     boolean requiresAppResource = true;
     // 感觉指假设有异常参数时
+=======
+    boolean isSpecialCommand = false;
+>>>>>>> 7857c6d633f3df426a6ac4618316eb83b1cefe2b
     private final boolean errorOnUnknownArgs;
 
     OptionParser(boolean errorOnUnknownArgs) {
@@ -456,6 +462,7 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
           conf.put(SparkLauncher.DRIVER_EXTRA_CLASSPATH, value);
           break;
         case CONF:
+          checkArgument(value != null, "Missing argument to %s", CONF);
           String[] setConf = value.split("=", 2);
           checkArgument(setConf.length == 2, "Invalid argument to %s: %s", CONF, value);
           conf.put(setConf[0], setConf[1]);
@@ -473,17 +480,14 @@ class SparkSubmitCommandBuilder extends AbstractCommandBuilder {
           break;
         case KILL_SUBMISSION:
         case STATUS:
-          requiresAppResource = false;
+          isSpecialCommand = true;
           parsedArgs.add(opt);
           parsedArgs.add(value);
           break;
         case HELP:
         case USAGE_ERROR:
-          requiresAppResource = false;
-          parsedArgs.add(opt);
-          break;
         case VERSION:
-          requiresAppResource = false;
+          isSpecialCommand = true;
           parsedArgs.add(opt);
           break;
         default:
